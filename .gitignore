@@ -1,0 +1,6 @@
+.cache
+.venv
+build
+log
+install
+.vscode
