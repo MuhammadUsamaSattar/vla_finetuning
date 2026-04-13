@@ -16,6 +16,7 @@ find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(HDF5 REQUIRED)
 #find_package()
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -34,6 +35,7 @@ target_link_libraries(mujoco_sim
   ament_index_cpp::ament_index_cpp
   glfw
   Eigen3::Eigen
+  HDF5::HDF5
 )
 
 install(TARGETS mujoco_sim
