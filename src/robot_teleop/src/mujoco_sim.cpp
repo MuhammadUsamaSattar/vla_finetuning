@@ -1,14 +1,16 @@
 #include "mujoco/mjmodel.h"
+#include "mujoco/mjtnum.h"
 #include "mujoco/mjvisualize.h"
+#include "robot_teleop/hdf5_saver.hpp"
 #include <Eigen/Dense>
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <hdf5.h>
 #include <mujoco/mujoco.h>
 #include <stdexcept>
 #include <vector>
@@ -132,7 +134,8 @@ void applyEEDelta(double dx, double dy, double dz, double drx, double dry,
 }
 
 // ─── Camera render helper ────────────────────────────────────────────────────
-void renderCamera(const char *cam_name, mjrRect rect) {
+std::pair<std::vector<unsigned char>, std::vector<float>>
+renderCamera(const char *cam_name, mjrRect rect) {
 	mjvCamera c;
 	mjv_defaultCamera(&c);
 	int id = mj_name2id(mj_model, mjOBJ_CAMERA, cam_name);
@@ -146,6 +149,8 @@ void renderCamera(const char *cam_name, mjrRect rect) {
 	std::vector<unsigned char> rgb(rect.width * rect.height * 3);
 	std::vector<float> depth(rect.width * rect.height);
 	mjr_readPixels(rgb.data(), depth.data(), rect, &con);
+
+	return {rgb, depth};
 }
 
 // ─── Callbacks ──────────────────────────────────────────────────────────────
@@ -221,12 +226,12 @@ void keyboard(GLFWwindow *window, int key, int /*scancode*/, int action,
 			key_rz_neg = false;
 		break;
 	// Gripper
-	case GLFW_KEY_F:
+	case GLFW_KEY_H:
 		key_gripper_open = on;
 		if (off)
 			key_gripper_open = false;
 		break;
-	case GLFW_KEY_H:
+	case GLFW_KEY_F:
 		key_gripper_close = on;
 		if (off)
 			key_gripper_close = false;
@@ -242,7 +247,8 @@ void keyboard(GLFWwindow *window, int key, int /*scancode*/, int action,
 		break;
 	// Reset episode
 	case GLFW_KEY_SPACE:
-		reset_episode = true;
+		if (action == GLFW_PRESS)
+			reset_episode = true;
 		break;
 	}
 }
@@ -264,6 +270,7 @@ int main() {
 	std::string assets_path = pkg_path + "/mujoco/franka_emika_panda/assets";
 	std::string plugin_dir = std::getenv("HOME");
 	plugin_dir += "/mujoco/bin/mujoco_plugin";
+	HDF5Saver saver{"data"};
 
 	// Load mesh decoder plugins
 	std::string stl_plugin = plugin_dir + "/libstl_decoder.so";
@@ -327,6 +334,9 @@ int main() {
 
 	// Main loop
 	while (!glfwWindowShouldClose(window)) {
+		float prev_time = 0.0;
+		saver.new_episode();
+
 		while (!reset_episode && !glfwWindowShouldClose(window)) {
 			// Reset episode
 			if (reset_episode)
@@ -367,9 +377,9 @@ int main() {
 			for (int i = 0; i < 7; i++)
 				mj_data->ctrl[i] = q_target[i];
 
-			if (key_gripper_open)
-				gripper_ctrl = std::max(0.0, gripper_ctrl - GRIPPER_STEP);
 			if (key_gripper_close)
+				gripper_ctrl = std::max(0.0, gripper_ctrl - GRIPPER_STEP);
+			if (key_gripper_open)
 				gripper_ctrl = std::min(255.0, gripper_ctrl + GRIPPER_STEP);
 			mj_data->ctrl[7] = gripper_ctrl;
 
@@ -384,7 +394,7 @@ int main() {
 
 			// 1. Main view — left half
 			mjrRect main_view = {0, 0, half_W, half_H};
-			renderCamera("main", main_view);
+			auto [main_rgb, main_depth] = renderCamera("main", main_view);
 
 			// 2. Side view — right half
 			mjrRect side_view = {half_W, 0, half_W, half_H};
@@ -396,7 +406,7 @@ int main() {
 
 			// 4. Wrist inset — bottom-right corner of left half
 			mjrRect inset = {half_W, half_H, half_W, half_H};
-			renderCamera("wrist_mount", inset);
+			auto [wrist_rgb, wrist_depth] = renderCamera("wrist_mount", inset);
 
 			// 5. HUD on main view
 			char info[300];
@@ -417,10 +427,10 @@ int main() {
 				mj_data->xquat[hand_id * 4 + 1],
 				mj_data->xquat[hand_id * 4 + 2],
 				mj_data->xquat[hand_id * 4 + 3]);
-			mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMLEFT, main_view, info, NULL,
-						&con);
 
 			// 5. Labels
+			mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMLEFT, main_view, info, NULL,
+						&con);
 			mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, main_view, "Main", NULL,
 						&con);
 			mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, side_view, "Side", NULL,
@@ -430,6 +440,27 @@ int main() {
 			mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, inset, "Wrist Camera",
 						NULL, &con);
 
+			// 6. Save images
+			if (mj_data->time - prev_time >= (1.0 / 30.0)) {
+				std::array<mjtNum, 8> ee_pos{mj_data->xpos[hand_id * 3 + 0],
+											 mj_data->xpos[hand_id * 3 + 1],
+											 mj_data->xpos[hand_id * 3 + 2],
+											 mj_data->xquat[hand_id * 4 + 0],
+											 mj_data->xquat[hand_id * 4 + 1],
+											 mj_data->xquat[hand_id * 4 + 2],
+											 mj_data->xquat[hand_id * 4 + 3],
+											 static_cast<mjtNum>(gripper_ctrl)};
+
+				std::array<mjtNum, 8> state{mj_data->ctrl[0], mj_data->ctrl[1],
+											mj_data->ctrl[2], mj_data->ctrl[3],
+											mj_data->ctrl[4], mj_data->ctrl[5],
+											mj_data->ctrl[6], mj_data->ctrl[7]};
+				saver.write_data(main_rgb, wrist_rgb, main_depth, wrist_depth,
+								 half_W, half_H, ee_pos, state);
+
+				prev_time = mj_data->time;
+			}
+
 			glfwSwapBuffers(window);
 			glfwPollEvents();
 		}
@@ -438,6 +469,7 @@ int main() {
 	}
 
 	// Cleanup
+	saver.close();
 	mjv_freeScene(&scn);
 	mjr_freeContext(&con);
 	mj_deleteData(mj_data);

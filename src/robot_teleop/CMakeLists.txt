@@ -16,34 +16,52 @@ find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(HDF5 REQUIRED)
+find_package(HDF5 REQUIRED COMPONENTS C CXX)
+find_package(Boost REQUIRED COMPONENTS filesystem system)
 #find_package()
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
 
 add_executable(mujoco_sim src/mujoco_sim.cpp)
+add_library(hdf5_saver src/hdf5_saver.cpp)
 
 target_include_directories(mujoco_sim PRIVATE
   ${MUJOCO_DIR}/include
   include/
 )
+target_include_directories(hdf5_saver PUBLIC 
+  ${MUJOCO_DIR}/include 
+  include
+)
 
-target_link_libraries(mujoco_sim
+target_link_libraries(mujoco_sim PRIVATE
+  hdf5_saver
   ${MUJOCO_DIR}/lib/libmujoco.so
   rclcpp::rclcpp
   ament_index_cpp::ament_index_cpp
   glfw
   Eigen3::Eigen
+)
+target_link_libraries(hdf5_saver
+  Boost::filesystem
+  Boost::system
   HDF5::HDF5
+  ${MUJOCO_DIR}/lib/libmujoco.so
 )
 
-install(TARGETS mujoco_sim
+install(TARGETS 
+  mujoco_sim
+  hdf5_saver
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY mujoco/
   DESTINATION share/${PROJECT_NAME}/mujoco
+)
+
+install(DIRECTORY include/
+  DESTINATION include/
 )
 
 if(BUILD_TESTING)
