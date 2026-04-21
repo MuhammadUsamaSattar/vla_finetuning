@@ -1,4 +1,55 @@
-BasedOnStyle: LLVM
+BasedOnStyle: Google
+
+# Indentation
 IndentWidth: 4
 TabWidth: 4
-UseTab: Always
+UseTab: Never
+
+# Column limit
+ColumnLimit: 100
+
+# Braces
+BreakBeforeBraces: Attach
+
+# Pointers & references
+PointerAlignment: Left
+DerivePointerAlignment: false
+
+# Includes
+SortIncludes: true
+IncludeBlocks: Regroup
+
+# Spaces
+SpaceBeforeParens: ControlStatements
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# Functions
+AllowShortFunctionsOnASingleLine: Inline
+
+# Control statements
+AllowShortIfStatementsOnASingleLine: false
+
+# Line breaking
+BinPackArguments: false
+BinPackParameters: false
+
+# Alignments
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+
+# Constructor initializer lists
+ConstructorInitializerIndentWidth: 2
+BreakConstructorInitializers: BeforeComma
+
+# Namespace indentation
+NamespaceIndentation: None
+
+# Access modifiers
+AccessModifierOffset: -1
+
+# Comments
+ReflowComments: true
+
+# C++ specifics
+Standard: c++17
