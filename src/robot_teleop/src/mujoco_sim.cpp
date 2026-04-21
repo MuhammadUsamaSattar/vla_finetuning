@@ -1,60 +1,36 @@
-#include <GLFW/glfw3.h>
-#include <mujoco/mujoco.h>
+#include "robot_teleop/mujoco_sim.hpp"
 
 #include <Eigen/Dense>
 #include <ament_index_cpp/get_package_share_directory.hpp>
-#include <array>
-#include <filesystem>
+#include <memory>
 
-#include "mujoco/mjmodel.h"
-#include "mujoco/mjtnum.h"
-#include "mujoco/mjvisualize.h"
 #include "robot_teleop/hdf5_saver.hpp"
 
 namespace fs = std::filesystem;
 
-// Global sim objects
-mjModel* mj_model = nullptr;
-mjData* mj_data = nullptr;
-mjvCamera cam;
-mjvOption opt;
-mjvScene scn;
-mjrContext con;
-
-// Mouse state
-bool button_left = false;
-bool button_middle = false;
-bool button_right = false;
-double lastx{0}, lasty{0};
-
-// Translation keys (XYZ)
-bool key_tx_pos = false, key_tx_neg = false;  // I/K → X
-bool key_ty_pos = false, key_ty_neg = false;  // J/L → Y
-bool key_tz_pos = false, key_tz_neg = false;  // U/P → Z
+bool Sim::key_tx_pos = false, Sim::key_tx_neg = false;  // I/K → X
+bool Sim::key_ty_pos = false, Sim::key_ty_neg = false;  // J/L → Y
+bool Sim::key_tz_pos = false, Sim::key_tz_neg = false;  // U/P → Z
 
 // Rotation keys (XYZ)
-bool key_rx_pos = false, key_rx_neg = false;  // W/S → X
-bool key_ry_pos = false, key_ry_neg = false;  // A/D → Y
-bool key_rz_pos = false, key_rz_neg = false;  // Q/E → Z
+bool Sim::key_rx_pos = false, Sim::key_rx_neg = false;  // W/S → X
+bool Sim::key_ry_pos = false, Sim::key_ry_neg = false;  // A/D → Y
+bool Sim::key_rz_pos = false, Sim::key_rz_neg = false;  // Q/E → Z
 
-// Gripper keys
-bool key_gripper_open = false;   // F
-bool key_gripper_close = false;  // H
+bool Sim::key_gripper_open = false;   // F
+bool Sim::key_gripper_close = false;  // H
 
 // EE control
-double gripper_ctrl = 255.0;
-double EE_STEP = 0.0005;
-double ROT_STEP = 0.0005;
-const double EE_STEP_STEP = EE_STEP / 10;
-const double ROT_STEP_STEP = ROT_STEP / 10;
-const double GRIPPER_STEP = 0.1;
-double q_target[7] = {0, 0, 0, -1.57079, 0, 1.57079, -0.7853};
+double Sim::EE_STEP = 0.0005;
+double Sim::ROT_STEP = 0.0005;
+const double Sim::EE_STEP_STEP = EE_STEP / 10;
+const double Sim::ROT_STEP_STEP = ROT_STEP / 10;
 
 // Reset episdoe
-bool reset_episode = false;
+bool Sim::reset_episode = false;
 
 // ─── VFS helper ─────────────────────────────────────────────────────────────
-void loadMeshFilesToVFS(mjVFS& vfs, const std::string& assets_dir) {
+void Sim::loadMeshFilesToVFS(mjVFS& vfs, const std::string& assets_dir) {
     if (!fs::exists(assets_dir))
         throw std::runtime_error("Assets directory does not exist: " + assets_dir);
 
@@ -75,7 +51,7 @@ void loadMeshFilesToVFS(mjVFS& vfs, const std::string& assets_dir) {
 }
 
 // ─── IK: Damped pseudoinverse (6DOF) ────────────────────────────────────────
-std::array<double, 6> applyEEDelta(
+std::array<double, 6> Sim::applyEEDelta(
     double dx, double dy, double dz, double drx, double dry, double drz) {
     int hand_id = mj_name2id(mj_model, mjOBJ_BODY, "hand");
     // if (hand_id < 0)
@@ -142,7 +118,7 @@ std::array<double, 6> applyEEDelta(
 }
 
 // ─── Camera render helper ────────────────────────────────────────────────────
-std::pair<std::vector<unsigned char>, std::vector<float>> renderCamera(
+std::pair<std::vector<unsigned char>, std::vector<float>> Sim::renderCamera(
     const std::string_view cam_name, const mjrRect& rect) {
     mjvCamera c;
     mjv_defaultCamera(&c);
@@ -162,105 +138,8 @@ std::pair<std::vector<unsigned char>, std::vector<float>> renderCamera(
 }
 
 // ─── Callbacks ──────────────────────────────────────────────────────────────
-void keyboard(GLFWwindow* window, int key, int /*scancode*/, int action, int /*mods*/) {
-    if (action == GLFW_PRESS && key == GLFW_KEY_ESCAPE)
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
 
-    bool on = (action == GLFW_PRESS || action == GLFW_REPEAT);
-    bool off = (action == GLFW_RELEASE);
-
-    switch (key) {
-        // Translation
-        case GLFW_KEY_J:
-            key_tx_pos = on;
-            if (off)
-                key_tx_pos = false;
-            break;
-        case GLFW_KEY_L:
-            key_tx_neg = on;
-            if (off)
-                key_tx_neg = false;
-            break;
-        case GLFW_KEY_I:
-            key_ty_pos = on;
-            if (off)
-                key_ty_pos = false;
-            break;
-        case GLFW_KEY_K:
-            key_ty_neg = on;
-            if (off)
-                key_ty_neg = false;
-            break;
-        case GLFW_KEY_O:
-            key_tz_pos = on;
-            if (off)
-                key_tz_pos = false;
-            break;
-        case GLFW_KEY_U:
-            key_tz_neg = on;
-            if (off)
-                key_tz_neg = false;
-            break;
-        // Rotation
-        case GLFW_KEY_S:
-            key_rx_pos = on;
-            if (off)
-                key_rx_pos = false;
-            break;
-        case GLFW_KEY_W:
-            key_rx_neg = on;
-            if (off)
-                key_rx_neg = false;
-            break;
-        case GLFW_KEY_A:
-            key_ry_pos = on;
-            if (off)
-                key_ry_pos = false;
-            break;
-        case GLFW_KEY_D:
-            key_ry_neg = on;
-            if (off)
-                key_ry_neg = false;
-            break;
-        case GLFW_KEY_E:
-            key_rz_pos = on;
-            if (off)
-                key_rz_pos = false;
-            break;
-        case GLFW_KEY_Q:
-            key_rz_neg = on;
-            if (off)
-                key_rz_neg = false;
-            break;
-        // Gripper
-        case GLFW_KEY_H:
-            key_gripper_open = on;
-            if (off)
-                key_gripper_open = false;
-            break;
-        case GLFW_KEY_F:
-            key_gripper_close = on;
-            if (off)
-                key_gripper_close = false;
-            break;
-        // Change steps
-        case GLFW_KEY_EQUAL:
-            EE_STEP += EE_STEP_STEP;
-            ROT_STEP += ROT_STEP_STEP;
-            break;
-        case GLFW_KEY_MINUS:
-            EE_STEP = std::max(EE_STEP - EE_STEP_STEP, 0.0);
-            ROT_STEP = std::max(ROT_STEP - ROT_STEP_STEP, 0.0);
-            break;
-        // Reset episode
-        case GLFW_KEY_SPACE:
-            if (action == GLFW_PRESS)
-                reset_episode = true;
-            break;
-    }
-}
-
-void resetEpisode() {
+void Sim::resetEpisode() {
     int key_id = mj_name2id(mj_model, mjOBJ_KEY, "home");
     if (key_id >= 0) {
         mj_resetDataKeyframe(mj_model, mj_data, key_id);
@@ -268,51 +147,18 @@ void resetEpisode() {
     }
 }
 
-template <typename Callable>
-class ScopeGuard {
-   public:
-    explicit ScopeGuard(Callable&& callable) : callable_{callable} {}
-
-    ScopeGuard(const ScopeGuard&) = delete;
-    ScopeGuard(ScopeGuard&&) = delete;
-    ScopeGuard operator=(const ScopeGuard&) = delete;
-    ScopeGuard operator=(ScopeGuard&&) = delete;
-
-    ~ScopeGuard() { callable_(); }
-
-   private:
-    Callable callable_;
-};
-
-template <typename Callable>
-ScopeGuard(Callable&&) -> ScopeGuard<Callable>;
-
-// ─── Main
-// ───────────────────────────────────────────────────────────────────
-int main() {
+void Sim::get_model_and_data() {
     std::string pkg_path = ament_index_cpp::get_package_share_directory("robot_teleop");
     std::string xml_path = pkg_path + "/mujoco/scene.xml";
     std::string assets_path = pkg_path + "/mujoco/franka_emika_panda/assets";
     std::string plugin_dir = std::getenv("HOME");
     plugin_dir += "/mujoco/bin/mujoco_plugin";
-    HDF5Saver saver{"data"};
 
     // Load mesh decoder plugins
     std::string stl_plugin = plugin_dir + "/libstl_decoder.so";
     std::string obj_plugin = plugin_dir + "/libobj_decoder.so";
     mj_loadPluginLibrary(stl_plugin.c_str());
     mj_loadPluginLibrary(obj_plugin.c_str());
-
-    // VFS
-    mjVFS vfs;
-    const ScopeGuard at_exit{[&vfs]() {
-        mjv_freeScene(&scn);
-        mjr_freeContext(&con);
-        mj_deleteData(mj_data);
-        mj_deleteModel(mj_model);
-        mj_deleteVFS(&vfs);
-        glfwTerminate();
-    }};
 
     mj_defaultVFS(&vfs);
     try {
@@ -330,6 +176,12 @@ int main() {
         throw std::runtime_error("Failed to load model: " + std::string(errstr));
     }
     mj_data = mj_makeData(mj_model);
+}
+
+void Sim::setup_env(double video_frame_rate,
+                    double save_frame_rate,
+                    std::array<std::string, 3> tasks) {
+    get_model_and_data();
 
     // Set initial pose from keyframe
     resetEpisode();
@@ -338,7 +190,7 @@ int main() {
     if (!glfwInit())
         throw std::runtime_error("Failed to init GLFW");
 
-    GLFWwindow* window = glfwCreateWindow(1920, 1080, "MuJoCo Sim", NULL, NULL);
+    window = glfwCreateWindow(1920, 1080, "MuJoCo Sim", NULL, NULL);
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     glfwSetKeyCallback(window, keyboard);
@@ -360,22 +212,25 @@ int main() {
         fprintf(stderr, "Warning: camera 'main' not found, using free camera\n");
     }
 
-    std::string tasks[3]{"Pick the green cube and place it on the platform.",
-                         "Pick the blue cylinder and place it on the platform.",
-                         "Pick the red sphere and place it on the platform."};
+    this->video_frame_rate = video_frame_rate;
+    this->save_frame_rate = save_frame_rate;
+    this->tasks = tasks;
+}
 
-    // Main loop
-    int task_idx = 0;
-
-    double video_frame_rate{60};
-    double save_frame_rate{30};
+// ─── Main
+// ───────────────────────────────────────────────────────────────────
+void Sim::sim(bool save) {
+    if (save)
+        saver = std::make_unique<HDF5Saver>("data");
     while (!glfwWindowShouldClose(window)) {
         double prev_save_time = 0.0;
         double prev_video_time = 0.0;
         std::array<mjtNum, 7> ee_pose{};
         double prev_gripper_ctrl = gripper_ctrl;
         std::array<double, 6> delta{};
-        saver.new_episode();
+
+        if (saver != nullptr)
+            saver->new_episode();
 
         while (!reset_episode && !glfwWindowShouldClose(window)) {
             // Reset episode
@@ -486,7 +341,7 @@ int main() {
                 mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, inset, "Wrist Camera", NULL, &con);
 
                 // 6. Save images
-                if ((mj_data->time - prev_save_time) >= (1.0 / save_frame_rate)) {
+                if (save && ((mj_data->time - prev_save_time) >= (1.0 / save_frame_rate))) {
                     std::copy(delta.begin(), delta.end(), ee_pose.begin());
                     ee_pose[6] = gripper_ctrl - prev_gripper_ctrl;
                     prev_gripper_ctrl = gripper_ctrl;
@@ -499,15 +354,15 @@ int main() {
                                                 mj_data->ctrl[5],
                                                 mj_data->ctrl[6],
                                                 mj_data->ctrl[7]};
-                    saver.write_data(main_rgb,
-                                     wrist_rgb,
-                                     main_depth,
-                                     wrist_depth,
-                                     half_W,
-                                     half_H,
-                                     ee_pose,
-                                     state,
-                                     tasks[task_idx % 3]);
+                    saver->write_data(main_rgb,
+                                      wrist_rgb,
+                                      main_depth,
+                                      wrist_depth,
+                                      half_W,
+                                      half_H,
+                                      ee_pose,
+                                      state,
+                                      tasks[task_idx % 3]);
                     prev_save_time = mj_data->time;
                 }
 
@@ -520,15 +375,15 @@ int main() {
         reset_episode = false;
         resetEpisode();
     }
+}
 
-    // Cleanup
-    saver.close();
-    // mjv_freeScene(&scn);
-    // mjr_freeContext(&con);
-    // mj_deleteData(mj_data);
-    // mj_deleteModel(mj_model);
-    // mj_deleteVFS(&vfs);
-    // glfwTerminate();
-
-    return 0;
+Sim::~Sim() {
+    if (saver != nullptr)
+        saver->close();
+    mjv_freeScene(&scn);
+    mjr_freeContext(&con);
+    mj_deleteData(mj_data);
+    mj_deleteModel(mj_model);
+    mj_deleteVFS(&vfs);
+    glfwTerminate();
 }
