@@ -9,8 +9,8 @@
 
 #include "mujoco/mjmodel.h"
 #include "mujoco/mjvisualize.h"
-#include "robot_teleop/controller.hpp"
-#include "robot_teleop/hdf5_saver.hpp"
+#include "sim/controller.hpp"
+#include "sim/hdf5_saver.hpp"
 
 template <typename Callable>
 class ScopeGuard {

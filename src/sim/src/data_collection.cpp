@@ -1,8 +1,8 @@
 #include <array>
 #include <string>
 
-#include "robot_teleop/controller.hpp"
-#include "robot_teleop/mujoco_sim.hpp"
+#include "sim/controller.hpp"
+#include "sim/mujoco_sim.hpp"
 
 int main() {
     int video_frame_rate = 60;
