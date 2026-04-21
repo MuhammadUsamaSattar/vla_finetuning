@@ -4,6 +4,7 @@
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <memory>
 
+#include "robot_teleop/controller.hpp"
 #include "robot_teleop/hdf5_saver.hpp"
 
 namespace fs = std::filesystem;
@@ -28,6 +29,156 @@ const double Sim::ROT_STEP_STEP = ROT_STEP / 10;
 
 // Reset episdoe
 bool Sim::reset_episode = false;
+
+Sim::Sim(Controller& controller) : controller(controller) {}
+// ─── Main
+// ───────────────────────────────────────────────────────────────────
+void Sim::run_sim() {
+    while (!glfwWindowShouldClose(window)) {
+        double prev_save_time = 0.0;
+        double prev_video_time = 0.0;
+        std::array<mjtNum, 7> ee_pose{};
+        double prev_gripper_ctrl = gripper_ctrl;
+        std::array<double, 6> delta{};
+
+        if (saver != nullptr)
+            saver->new_episode();
+
+        while (!reset_episode && !glfwWindowShouldClose(window)) {
+            // Reset episode
+            if (reset_episode)
+                break;
+
+            auto [dx, dy, dz, drx, dry, drz] = controller.get_deltas(key_tx_pos,
+                                                                     key_tx_neg,
+                                                                     key_ty_pos,
+                                                                     key_ty_neg,
+                                                                     key_tz_pos,
+                                                                     key_tz_neg,
+                                                                     EE_STEP,
+                                                                     ROT_STEP);
+            auto new_delta = applyEEDelta(dx, dy, dz, drx, dry, drz);
+            for (unsigned int i = 0; i < (unsigned int)delta.size(); i++) {
+                delta[i] += new_delta[i];
+            }
+
+            for (int i = 0; i < 7; i++) mj_data->ctrl[i] = q_target[i];
+
+            if (key_gripper_close)
+                gripper_ctrl = std::max(0.0, gripper_ctrl - GRIPPER_STEP);
+            if (key_gripper_open)
+                gripper_ctrl = std::min(255.0, gripper_ctrl + GRIPPER_STEP);
+            mj_data->ctrl[7] = gripper_ctrl;
+
+            mj_step(mj_model, mj_data);
+
+            // ── Rendering
+            // ──────────────────────────────────────────────────────
+            if ((mj_data->time - prev_video_time) > (1.0 / video_frame_rate)) {
+                int W, H;
+                glfwGetFramebufferSize(window, &W, &H);
+                int half_W = W / 2;
+                int half_H = H / 2;
+
+                // 1. Main view — left half
+                mjrRect main_view = {0, 0, half_W, half_H};
+                auto [main_rgb, main_depth] = renderCamera("main", main_view);
+
+                // 2. Side view — right half
+                mjrRect side_view = {half_W, 0, half_W, half_H};
+                renderCamera("side", side_view);
+
+                // 3. Side view — front half
+                mjrRect front_view = {0, half_H, half_W, half_H};
+                renderCamera("front", front_view);
+
+                // 4. Wrist inset — bottom-right corner of left half
+                mjrRect inset = {half_W, half_H, half_W, half_H};
+                auto [wrist_rgb, wrist_depth] = renderCamera("wrist_mount", inset);
+
+                // 5. HUD on main view
+                // char info[512];
+                std::array<char, 512U> info;
+                int hand_id = mj_name2id(mj_model, mjOBJ_BODY, "hand");
+                snprintf(info.data(),
+                         info.size(),
+                         "Episode: %d\n"
+                         "Task: %s\n"
+                         "Step Rates:  Increase: =  Decrease: -\n"
+                         "Translation  I/K: X  J/L: Y  U/O: Z\n"
+                         "Rotation     W/S: X  A/D: Y  Q/E: Z\n"
+                         "Gripper      F: Open  H: Close  (%.0f)\n"
+                         "Reset Episode: Spacebar\n"
+                         "Time: %.2f\n"
+                         "X: %f  Y: %f  Z: %f\n"
+                         "w: %f  x: %f  y: %f  z: %f",
+                         task_idx,
+                         tasks[task_idx % 3].c_str(),
+                         gripper_ctrl,
+                         mj_data->time,
+                         mj_data->xpos[hand_id * 3 + 0],
+                         mj_data->xpos[hand_id * 3 + 1],
+                         mj_data->xpos[hand_id * 3 + 2],
+                         mj_data->xquat[hand_id * 4 + 0],
+                         mj_data->xquat[hand_id * 4 + 1],
+                         mj_data->xquat[hand_id * 4 + 2],
+                         mj_data->xquat[hand_id * 4 + 3]);
+
+                // 5. Labels
+                mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMLEFT, main_view, info.data(), NULL, &con);
+                mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, main_view, "Main", NULL, &con);
+                mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, side_view, "Side", NULL, &con);
+                mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, front_view, "Front", NULL, &con);
+                mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, inset, "Wrist Camera", NULL, &con);
+
+                // 6. Save images
+                if (saver != nullptr &&
+                    ((mj_data->time - prev_save_time) >= (1.0 / save_frame_rate))) {
+                    std::copy(delta.begin(), delta.end(), ee_pose.begin());
+                    ee_pose[6] = gripper_ctrl - prev_gripper_ctrl;
+                    prev_gripper_ctrl = gripper_ctrl;
+
+                    std::array<mjtNum, 8> state{mj_data->ctrl[0],
+                                                mj_data->ctrl[1],
+                                                mj_data->ctrl[2],
+                                                mj_data->ctrl[3],
+                                                mj_data->ctrl[4],
+                                                mj_data->ctrl[5],
+                                                mj_data->ctrl[6],
+                                                mj_data->ctrl[7]};
+                    saver->write_data(main_rgb,
+                                      wrist_rgb,
+                                      main_depth,
+                                      wrist_depth,
+                                      half_W,
+                                      half_H,
+                                      ee_pose,
+                                      state,
+                                      tasks[task_idx % 3]);
+                    prev_save_time = mj_data->time;
+                }
+
+                prev_video_time = mj_data->time;
+                glfwSwapBuffers(window);
+            }
+            glfwPollEvents();
+        }
+        task_idx += 1;
+        reset_episode = false;
+        resetEpisode();
+    }
+}
+
+Sim::~Sim() {
+    if (saver != nullptr)
+        saver->close();
+    mjv_freeScene(&scn);
+    mjr_freeContext(&con);
+    mj_deleteData(mj_data);
+    mj_deleteModel(mj_model);
+    mj_deleteVFS(&vfs);
+    glfwTerminate();
+}
 
 // ─── VFS helper ─────────────────────────────────────────────────────────────
 void Sim::loadMeshFilesToVFS(mjVFS& vfs, const std::string& assets_dir) {
@@ -180,7 +331,8 @@ void Sim::get_model_and_data() {
 
 void Sim::setup_env(double video_frame_rate,
                     double save_frame_rate,
-                    std::array<std::string, 3> tasks) {
+                    std::array<std::string, 3> tasks,
+                    bool save) {
     get_model_and_data();
 
     // Set initial pose from keyframe
@@ -215,175 +367,7 @@ void Sim::setup_env(double video_frame_rate,
     this->video_frame_rate = video_frame_rate;
     this->save_frame_rate = save_frame_rate;
     this->tasks = tasks;
-}
 
-// ─── Main
-// ───────────────────────────────────────────────────────────────────
-void Sim::sim(bool save) {
     if (save)
         saver = std::make_unique<HDF5Saver>("data");
-    while (!glfwWindowShouldClose(window)) {
-        double prev_save_time = 0.0;
-        double prev_video_time = 0.0;
-        std::array<mjtNum, 7> ee_pose{};
-        double prev_gripper_ctrl = gripper_ctrl;
-        std::array<double, 6> delta{};
-
-        if (saver != nullptr)
-            saver->new_episode();
-
-        while (!reset_episode && !glfwWindowShouldClose(window)) {
-            // Reset episode
-            if (reset_episode)
-                break;
-            // Translation
-            double dx = 0, dy = 0, dz = 0;
-            if (key_tx_pos)
-                dx += EE_STEP;
-            if (key_tx_neg)
-                dx -= EE_STEP;
-            if (key_ty_pos)
-                dy += EE_STEP;
-            if (key_ty_neg)
-                dy -= EE_STEP;
-            if (key_tz_pos)
-                dz += EE_STEP;
-            if (key_tz_neg)
-                dz -= EE_STEP;
-
-            // Rotation
-            double drx = 0, dry = 0, drz = 0;
-            if (key_rx_pos)
-                drx += ROT_STEP;
-            if (key_rx_neg)
-                drx -= ROT_STEP;
-            if (key_ry_pos)
-                dry += ROT_STEP;
-            if (key_ry_neg)
-                dry -= ROT_STEP;
-            if (key_rz_pos)
-                drz += ROT_STEP;
-            if (key_rz_neg)
-                drz -= ROT_STEP;
-
-            auto new_delta = applyEEDelta(dx, dy, dz, drx, dry, drz);
-            for (unsigned int i = 0; i < (unsigned int)delta.size(); i++) {
-                delta[i] += new_delta[i];
-            }
-
-            for (int i = 0; i < 7; i++) mj_data->ctrl[i] = q_target[i];
-
-            if (key_gripper_close)
-                gripper_ctrl = std::max(0.0, gripper_ctrl - GRIPPER_STEP);
-            if (key_gripper_open)
-                gripper_ctrl = std::min(255.0, gripper_ctrl + GRIPPER_STEP);
-            mj_data->ctrl[7] = gripper_ctrl;
-
-            mj_step(mj_model, mj_data);
-
-            // ── Rendering
-            // ──────────────────────────────────────────────────────
-            if ((mj_data->time - prev_video_time) > (1.0 / video_frame_rate)) {
-                int W, H;
-                glfwGetFramebufferSize(window, &W, &H);
-                int half_W = W / 2;
-                int half_H = H / 2;
-
-                // 1. Main view — left half
-                mjrRect main_view = {0, 0, half_W, half_H};
-                auto [main_rgb, main_depth] = renderCamera("main", main_view);
-
-                // 2. Side view — right half
-                mjrRect side_view = {half_W, 0, half_W, half_H};
-                renderCamera("side", side_view);
-
-                // 3. Side view — front half
-                mjrRect front_view = {0, half_H, half_W, half_H};
-                renderCamera("front", front_view);
-
-                // 4. Wrist inset — bottom-right corner of left half
-                mjrRect inset = {half_W, half_H, half_W, half_H};
-                auto [wrist_rgb, wrist_depth] = renderCamera("wrist_mount", inset);
-
-                // 5. HUD on main view
-                // char info[512];
-                std::array<char, 512U> info;
-                int hand_id = mj_name2id(mj_model, mjOBJ_BODY, "hand");
-                snprintf(info.data(),
-                         info.size(),
-                         "Episode: %d\n"
-                         "Task: %s\n"
-                         "Step Rates:  Increase: =  Decrease: -\n"
-                         "Translation  I/K: X  J/L: Y  U/O: Z\n"
-                         "Rotation     W/S: X  A/D: Y  Q/E: Z\n"
-                         "Gripper      F: Open  H: Close  (%.0f)\n"
-                         "Reset Episode: Spacebar\n"
-                         "Time: %.2f\n"
-                         "X: %f  Y: %f  Z: %f\n"
-                         "w: %f  x: %f  y: %f  z: %f",
-                         task_idx,
-                         tasks[task_idx % 3].c_str(),
-                         gripper_ctrl,
-                         mj_data->time,
-                         mj_data->xpos[hand_id * 3 + 0],
-                         mj_data->xpos[hand_id * 3 + 1],
-                         mj_data->xpos[hand_id * 3 + 2],
-                         mj_data->xquat[hand_id * 4 + 0],
-                         mj_data->xquat[hand_id * 4 + 1],
-                         mj_data->xquat[hand_id * 4 + 2],
-                         mj_data->xquat[hand_id * 4 + 3]);
-
-                // 5. Labels
-                mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMLEFT, main_view, info.data(), NULL, &con);
-                mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, main_view, "Main", NULL, &con);
-                mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, side_view, "Side", NULL, &con);
-                mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, front_view, "Front", NULL, &con);
-                mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, inset, "Wrist Camera", NULL, &con);
-
-                // 6. Save images
-                if (save && ((mj_data->time - prev_save_time) >= (1.0 / save_frame_rate))) {
-                    std::copy(delta.begin(), delta.end(), ee_pose.begin());
-                    ee_pose[6] = gripper_ctrl - prev_gripper_ctrl;
-                    prev_gripper_ctrl = gripper_ctrl;
-
-                    std::array<mjtNum, 8> state{mj_data->ctrl[0],
-                                                mj_data->ctrl[1],
-                                                mj_data->ctrl[2],
-                                                mj_data->ctrl[3],
-                                                mj_data->ctrl[4],
-                                                mj_data->ctrl[5],
-                                                mj_data->ctrl[6],
-                                                mj_data->ctrl[7]};
-                    saver->write_data(main_rgb,
-                                      wrist_rgb,
-                                      main_depth,
-                                      wrist_depth,
-                                      half_W,
-                                      half_H,
-                                      ee_pose,
-                                      state,
-                                      tasks[task_idx % 3]);
-                    prev_save_time = mj_data->time;
-                }
-
-                prev_video_time = mj_data->time;
-                glfwSwapBuffers(window);
-            }
-            glfwPollEvents();
-        }
-        task_idx += 1;
-        reset_episode = false;
-        resetEpisode();
-    }
-}
-
-Sim::~Sim() {
-    if (saver != nullptr)
-        saver->close();
-    mjv_freeScene(&scn);
-    mjr_freeContext(&con);
-    mj_deleteData(mj_data);
-    mj_deleteModel(mj_model);
-    mj_deleteVFS(&vfs);
-    glfwTerminate();
 }

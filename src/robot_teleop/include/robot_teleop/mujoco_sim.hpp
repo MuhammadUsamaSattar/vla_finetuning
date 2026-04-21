@@ -9,6 +9,7 @@
 
 #include "mujoco/mjmodel.h"
 #include "mujoco/mjvisualize.h"
+#include "robot_teleop/controller.hpp"
 #include "robot_teleop/hdf5_saver.hpp"
 
 template <typename Callable>
@@ -31,6 +32,16 @@ template <typename Callable>
 ScopeGuard(Callable&&) -> ScopeGuard<Callable>;
 
 class Sim {
+   public:
+    Sim(Controller& controller);
+    void setup_env(double video_frame_rate,
+                   double save_frame_rate,
+                   std::array<std::string, 3> tasks,
+                   bool save);
+    void run_sim();
+    ~Sim();
+
+   private:
     // Global sim objects
     mjModel* mj_model = nullptr;
     mjData* mj_data = nullptr;
@@ -79,6 +90,7 @@ class Sim {
     static bool reset_episode;
 
     std::unique_ptr<HDF5Saver> saver{};
+    Controller& controller;
 
     void loadMeshFilesToVFS(mjVFS& vfs, const std::string& assets_dir);
 
@@ -188,11 +200,4 @@ class Sim {
 
     void resetEpisode();
     void get_model_and_data();
-
-   public:
-    void setup_env(double video_frame_rate,
-                   double save_frame_rate,
-                   std::array<std::string, 3> tasks);
-    void sim(bool save);
-    ~Sim();
 };
