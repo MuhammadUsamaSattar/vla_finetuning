@@ -10,6 +10,12 @@ class Controller {
                                              bool key_ty_neg,
                                              bool key_tz_pos,
                                              bool key_tz_neg,
+                                             bool key_rx_pos,
+                                             bool key_rx_neg,
+                                             bool key_ry_pos,
+                                             bool key_ry_neg,
+                                             bool key_rz_pos,
+                                             bool key_rz_neg,
                                              double EE_STEP,
                                              double ROT_STEP) = 0;
 
@@ -24,6 +30,12 @@ class TeleoperationController : public Controller {
                                      bool key_ty_neg,
                                      bool key_tz_pos,
                                      bool key_tz_neg,
+                                     bool key_rx_pos,
+                                     bool key_rx_neg,
+                                     bool key_ry_pos,
+                                     bool key_ry_neg,
+                                     bool key_rz_pos,
+                                     bool key_rz_neg,
                                      double EE_STEP,
                                      double ROT_STEP) override;
 

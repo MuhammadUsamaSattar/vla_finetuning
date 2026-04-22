@@ -8,12 +8,14 @@ std::array<double, 6> TeleoperationController::get_deltas(bool key_tx_pos,
                                                           bool key_ty_neg,
                                                           bool key_tz_pos,
                                                           bool key_tz_neg,
+                                                          bool key_rx_pos,
+                                                          bool key_rx_neg,
+                                                          bool key_ry_pos,
+                                                          bool key_ry_neg,
+                                                          bool key_rz_pos,
+                                                          bool key_rz_neg,
                                                           double EE_STEP,
                                                           double ROT_STEP) {
-    // Rotation keys (XYZ)
-    static bool key_rx_pos, key_rx_neg;  // W/S → X
-    static bool key_ry_pos, key_ry_neg;  // A/D → Y
-    static bool key_rz_pos, key_rz_neg;  // Q/E → Z) override {
     // Translation
     double dx = 0, dy = 0, dz = 0;
     if (key_tx_pos)

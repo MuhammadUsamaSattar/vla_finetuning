@@ -82,7 +82,7 @@ class Sim {
     static double ROT_STEP;
     const static double EE_STEP_STEP;
     const static double ROT_STEP_STEP;
-    const double GRIPPER_STEP = 0.1;
+    const double GRIPPER_STEP = 0.5;
     double q_target[7] = {0, 0, 0, -1.57079, 0, 1.57079, -0.7853};
 
     // Reset episdoe

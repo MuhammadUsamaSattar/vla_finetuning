@@ -2,8 +2,11 @@
 
 #include <Eigen/Dense>
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <array>
 #include <memory>
+#include <thread>
 
+#include "mujoco/mjtnum.h"
 #include "sim/controller.hpp"
 #include "sim/hdf5_saver.hpp"
 
@@ -22,8 +25,8 @@ bool Sim::key_gripper_open = false;   // F
 bool Sim::key_gripper_close = false;  // H
 
 // EE control
-double Sim::EE_STEP = 0.0005;
-double Sim::ROT_STEP = 0.0005;
+double Sim::EE_STEP = 0.000625;
+double Sim::ROT_STEP = 0.0025;
 const double Sim::EE_STEP_STEP = EE_STEP / 10;
 const double Sim::ROT_STEP_STEP = ROT_STEP / 10;
 
@@ -49,12 +52,25 @@ void Sim::run_sim() {
             if (reset_episode)
                 break;
 
+            double sim_time = mj_data->time;
+            double real_time = glfwGetTime();
+
+            if (sim_time > real_time) {
+                std::this_thread::sleep_for(std::chrono::duration<double>(sim_time - real_time));
+            }
+
             auto [dx, dy, dz, drx, dry, drz] = controller.get_deltas(key_tx_pos,
                                                                      key_tx_neg,
                                                                      key_ty_pos,
                                                                      key_ty_neg,
                                                                      key_tz_pos,
                                                                      key_tz_neg,
+                                                                     key_rx_pos,
+                                                                     key_rx_neg,
+                                                                     key_ry_pos,
+                                                                     key_ry_neg,
+                                                                     key_rz_pos,
+                                                                     key_rz_neg,
                                                                      EE_STEP,
                                                                      ROT_STEP);
             auto new_delta = applyEEDelta(dx, dy, dz, drx, dry, drz);
@@ -257,7 +273,7 @@ std::array<double, 6> Sim::applyEEDelta(
     // dq = J+ * ee_pose
     Eigen::VectorXd dq = J_pinv * v;
 
-    const double gain{100};
+    const double gain{375};
     for (int i = 0; i < n_arm; i++) {
         q_target[i] += dq(i) * mj_model->opt.timestep * gain;
         q_target[i] = std::clamp(q_target[i],
