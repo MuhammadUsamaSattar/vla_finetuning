@@ -299,7 +299,7 @@ void Sim::resetEpisode() {
 }
 
 void Sim::get_model_and_data() {
-    std::string pkg_path = ament_index_cpp::get_package_share_directory("robot_teleop");
+    std::string pkg_path = ament_index_cpp::get_package_share_directory("sim");
     std::string xml_path = pkg_path + "/mujoco/scene.xml";
     std::string assets_path = pkg_path + "/mujoco/franka_emika_panda/assets";
     std::string plugin_dir = std::getenv("HOME");
@@ -369,5 +369,5 @@ void Sim::setup_env(double video_frame_rate,
     this->tasks = tasks;
 
     if (save)
-        saver = std::make_unique<HDF5Saver>("data");
+        saver = std::make_unique<HDF5Saver>("temp_data");
 }

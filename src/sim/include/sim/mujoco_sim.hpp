@@ -3,7 +3,6 @@
 #include <GLFW/glfw3.h>
 #include <mujoco/mujoco.h>
 
-#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <array>
 #include <memory>
 

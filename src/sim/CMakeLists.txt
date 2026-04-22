@@ -23,7 +23,7 @@ find_package(Boost REQUIRED COMPONENTS filesystem system)
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
 
-add_executable(data_collection src/data_collection.cpp)
+add_executable(run_sim src/run_sim.cpp)
 add_library(controller src/controller.cpp)
 add_library(mujoco_sim src/mujoco_sim.cpp)
 add_library(hdf5_saver src/hdf5_saver.cpp)
@@ -32,7 +32,7 @@ target_include_directories(mujoco_sim PUBLIC
   ${MUJOCO_DIR}/include
   include/
 )
-target_include_directories(data_collection PRIVATE
+target_include_directories(run_sim PRIVATE
   ${MUJOCO_DIR}/include
   include/
 )
@@ -54,7 +54,7 @@ target_link_libraries(mujoco_sim PUBLIC
   Eigen3::Eigen
   controller
 )
-target_link_libraries(data_collection
+target_link_libraries(run_sim
   mujoco_sim
   controller
 )
@@ -68,7 +68,7 @@ target_link_libraries(hdf5_saver PUBLIC
 install(TARGETS 
   hdf5_saver
   mujoco_sim
-  data_collection
+  run_sim
   controller
   DESTINATION lib/${PROJECT_NAME}
 )
