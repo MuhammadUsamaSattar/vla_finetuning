@@ -72,8 +72,7 @@ int main(int argc, char* argv[]) {
         controller = std::make_unique<TeleoperationController>();
     }
 
-    Sim sim{*controller};
-    sim.setup_env(video_frame_rate, save_frame_rate, tasks, args.save);
+    Sim sim{*controller, video_frame_rate, save_frame_rate, tasks, args.save};
     sim.run_sim();
 
     return 0;

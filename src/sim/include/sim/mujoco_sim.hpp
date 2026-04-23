@@ -5,6 +5,7 @@
 
 #include <array>
 #include <memory>
+#include <thread>
 
 #include "mujoco/mjmodel.h"
 #include "mujoco/mjvisualize.h"
@@ -32,9 +33,13 @@ ScopeGuard(Callable&&) -> ScopeGuard<Callable>;
 
 class Sim {
    public:
-    Sim(Controller& controller);
-    void setup_env(double video_frame_rate,
-                   double save_frame_rate,
+    Sim(Controller& controller,
+        int video_frame_rate,
+        int save_frame_rate,
+        std::array<std::string, 3> tasks,
+        bool save);
+    void setup_env(int video_frame_rate,
+                   int save_frame_rate,
                    std::array<std::string, 3> tasks,
                    bool save);
     void run_sim();
@@ -90,6 +95,7 @@ class Sim {
 
     std::unique_ptr<HDF5Saver> saver{};
     Controller& controller;
+    std::thread saver_thread;
 
     void loadMeshFilesToVFS(mjVFS& vfs, const std::string& assets_dir);
 

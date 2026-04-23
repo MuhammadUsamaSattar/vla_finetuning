@@ -4,7 +4,6 @@
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <array>
 #include <memory>
-#include <thread>
 
 #include "mujoco/mjtnum.h"
 #include "sim/controller.hpp"
@@ -33,10 +32,20 @@ const double Sim::ROT_STEP_STEP = ROT_STEP / 10;
 // Reset episdoe
 bool Sim::reset_episode = false;
 
-Sim::Sim(Controller& controller) : controller(controller) {}
+Sim::Sim(Controller& controller,
+         int video_frame_rate,
+         int save_frame_rate,
+         std::array<std::string, 3> tasks,
+         bool save)
+  : controller(controller) {
+    setup_env(video_frame_rate, save_frame_rate, tasks, save);
+}
 // ─── Main
 // ───────────────────────────────────────────────────────────────────
 void Sim::run_sim() {
+    if (saver != nullptr)
+        saver_thread = std::thread(&HDF5Saver::run_write_loop, saver.get());
+
     while (!glfwWindowShouldClose(window)) {
         double prev_save_time = 0.0;
         double prev_video_time = 0.0;
@@ -90,7 +99,7 @@ void Sim::run_sim() {
 
             // ── Rendering
             // ──────────────────────────────────────────────────────
-            if ((mj_data->time - prev_video_time) > (1.0 / video_frame_rate)) {
+            if ((mj_data->time - prev_video_time) > (1.0 / (double)video_frame_rate)) {
                 int W, H;
                 glfwGetFramebufferSize(window, &W, &H);
                 int half_W = W / 2;
@@ -149,7 +158,7 @@ void Sim::run_sim() {
 
                 // 6. Save images
                 if (saver != nullptr &&
-                    ((mj_data->time - prev_save_time) >= (1.0 / save_frame_rate))) {
+                    ((mj_data->time - prev_save_time) >= (1.0 / (double)save_frame_rate))) {
                     std::copy(delta.begin(), delta.end(), ee_pose.begin());
                     ee_pose[6] = gripper_ctrl - prev_gripper_ctrl;
                     prev_gripper_ctrl = gripper_ctrl;
@@ -162,15 +171,16 @@ void Sim::run_sim() {
                                                 mj_data->ctrl[5],
                                                 mj_data->ctrl[6],
                                                 mj_data->ctrl[7]};
-                    saver->write_data(main_rgb,
-                                      wrist_rgb,
-                                      main_depth,
-                                      wrist_depth,
-                                      half_W,
-                                      half_H,
-                                      ee_pose,
-                                      state,
-                                      tasks[task_idx % 3]);
+                    saver->push(std::move(main_rgb),
+                                std::move(wrist_rgb),
+                                std::move(main_depth),
+                                std::move(wrist_depth),
+                                half_W,
+                                half_H,
+                                std::move(ee_pose),
+                                std::move(state),
+                                tasks[task_idx % 3]);
+                    // saver->write_data();
                     prev_save_time = mj_data->time;
                 }
 
@@ -182,6 +192,10 @@ void Sim::run_sim() {
         task_idx += 1;
         reset_episode = false;
         resetEpisode();
+    }
+    if (saver_thread.joinable()) {
+        saver->running.store(false);
+        saver_thread.join();
     }
 }
 
@@ -345,8 +359,8 @@ void Sim::get_model_and_data() {
     mj_data = mj_makeData(mj_model);
 }
 
-void Sim::setup_env(double video_frame_rate,
-                    double save_frame_rate,
+void Sim::setup_env(int video_frame_rate,
+                    int save_frame_rate,
                     std::array<std::string, 3> tasks,
                     bool save) {
     get_model_and_data();
