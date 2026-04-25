@@ -4,6 +4,7 @@
 #include <mujoco/mujoco.h>
 
 #include <array>
+#include <cstdlib>
 #include <memory>
 #include <thread>
 
@@ -206,3 +207,5 @@ class Sim {
     void resetEpisode();
     void get_model_and_data();
 };
+
+double get_random_double(double a, double b);

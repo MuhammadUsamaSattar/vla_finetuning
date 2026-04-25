@@ -22,6 +22,7 @@ struct SaveData {
     std::array<mjtNum, 7> ee_pose{};
     std::array<mjtNum, 8> state{};
     std::string task;
+    double time;
 };
 class HDF5Saver {
    public:
@@ -41,7 +42,8 @@ class HDF5Saver {
               int H,
               std::array<mjtNum, 7>&& ee_pose,
               std::array<mjtNum, 8>&& state,
-              std::string task);
+              std::string task,
+              double time);
     void close();
 
    private:

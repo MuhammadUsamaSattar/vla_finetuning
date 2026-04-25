@@ -3,9 +3,11 @@
 #include <Eigen/Dense>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <array>
+#include <cstdlib>
 #include <memory>
 
 #include "mujoco/mjtnum.h"
+#include "mujoco/mujoco.h"
 #include "sim/controller.hpp"
 #include "sim/hdf5_saver.hpp"
 
@@ -179,8 +181,8 @@ void Sim::run_sim() {
                                 half_H,
                                 std::move(ee_pose),
                                 std::move(state),
-                                tasks[task_idx % 3]);
-                    // saver->write_data();
+                                tasks[task_idx % 3],
+                                mj_data->time);
                     prev_save_time = mj_data->time;
                 }
 
@@ -190,7 +192,6 @@ void Sim::run_sim() {
             glfwPollEvents();
         }
         task_idx += 1;
-        reset_episode = false;
         resetEpisode();
     }
     if (saver_thread.joinable()) {
@@ -321,10 +322,32 @@ std::pair<std::vector<unsigned char>, std::vector<float>> Sim::renderCamera(
 // ─── Callbacks ──────────────────────────────────────────────────────────────
 
 void Sim::resetEpisode() {
+    reset_episode = false;
+
     int key_id = mj_name2id(mj_model, mjOBJ_KEY, "home");
     if (key_id >= 0) {
         mj_resetDataKeyframe(mj_model, mj_data, key_id);
         for (int i = 0; i < 7; i++) q_target[i] = mj_data->ctrl[i];
+    }
+
+    std::array<int, 3> body_ids{mj_name2id(mj_model, mjOBJ_BODY, "cylinder"),
+                                mj_name2id(mj_model, mjOBJ_BODY, "ball"),
+                                mj_name2id(mj_model, mjOBJ_BODY, "box")};
+
+    std::srand(std::time({}));
+    for (auto body_id : body_ids) {
+        int joint_id = mj_model->body_jntadr[body_id];    // joint index
+        int q_address = mj_model->jnt_qposadr[joint_id];  // qpos start
+
+        mj_data->qpos[q_address + 0] = get_random_double(-0.5, 0.5);
+        mj_data->qpos[q_address + 1] = get_random_double(-0.5, 0.5);
+        mj_data->qpos[q_address + 2] = 0.025;
+
+        // keep orientation valid (unit quaternion!)
+        // mj_data->qpos[qadr + 3] = 1.0;
+        // mj_data->qpos[qadr + 4] = 0.0;
+        // mj_data->qpos[qadr + 5] = 0.0;
+        // mj_data->qpos[qadr + 6] = 0.0;
     }
 }
 
@@ -400,4 +423,8 @@ void Sim::setup_env(int video_frame_rate,
 
     if (save)
         saver = std::make_unique<HDF5Saver>("temp_data");
+}
+
+double get_random_double(double a, double b) {
+    return ((static_cast<double>(std::rand()) / RAND_MAX) * (b - a)) + a;
 }

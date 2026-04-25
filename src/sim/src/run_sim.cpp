@@ -62,7 +62,7 @@ int main(int argc, char* argv[]) {
     }
 
     int video_frame_rate = 60;
-    int save_frame_rate = 60;
+    int save_frame_rate = 15;
     std::array<std::string, 3> tasks{"Pick the green cube and place it on the platform.",
                                      "Pick the blue cylinder and place it on the platform.",
                                      "Pick the red sphere and place it on the platform."};

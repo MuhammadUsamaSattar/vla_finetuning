@@ -1,9 +1,13 @@
 #include "sim/hdf5_saver.hpp"
 
+#include <H5Attribute.h>
 #include <H5DataSet.h>
+#include <H5Exception.h>
 #include <H5PredType.h>
 #include <H5Spublic.h>
+#include <H5public.h>
 
+#include <array>
 #include <boost/filesystem.hpp>
 #include <format>
 #include <mutex>
@@ -46,6 +50,7 @@ void HDF5Saver::write_data() {
     std::vector<hsize_t> dims_ee_pose{static_cast<hsize_t>(data.ee_pose.size())};
     std::vector<hsize_t> dims_state{static_cast<hsize_t>(data.state.size())};
     std::vector<hsize_t> dims_task{static_cast<hsize_t>(1)};
+    std::vector<hsize_t> dim_attr{static_cast<hsize_t>(1)};
 
     write_img_data(frame, data.main_img, dims_rgb, H5::PredType::NATIVE_UINT8, "main_img");
     write_img_data(frame, data.wrist_img, dims_rgb, H5::PredType::NATIVE_UINT8, "wrist_img");
@@ -56,6 +61,10 @@ void HDF5Saver::write_data() {
     write_vector_data(frame, data.state, dims_state, H5::PredType::NATIVE_DOUBLE, "state");
 
     write_task_data(frame, data.task, "task");
+
+    H5::DataSpace attr_dataspace{1, dim_attr.data()};
+    H5::Attribute attr{frame.createAttribute("time", H5::PredType::NATIVE_DOUBLE, attr_dataspace)};
+    attr.write(H5::PredType::NATIVE_DOUBLE, &data.time);
 
     frame.close();
 }
@@ -68,7 +77,8 @@ void HDF5Saver::push(std::vector<uint8_t>&& main_img,
                      int H,
                      std::array<mjtNum, 7>&& ee_pose,
                      std::array<mjtNum, 8>&& state,
-                     std::string task) {
+                     std::string task,
+                     double time) {
     std::lock_guard<std::mutex> lock(mtx);
     queue.push(SaveData{std::move(main_img),
                         std::move(wrist_img),
@@ -78,7 +88,8 @@ void HDF5Saver::push(std::vector<uint8_t>&& main_img,
                         H,
                         std::move(ee_pose),
                         std::move(state),
-                        std::move(task)});
+                        std::move(task),
+                        time});
 }
 
 void HDF5Saver::close() {
