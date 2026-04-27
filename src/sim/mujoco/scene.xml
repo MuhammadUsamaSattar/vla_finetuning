@@ -49,8 +49,8 @@
         solimp="0.99 0.999 0.001" solref="0.002 1" />
     </body>
 
-    <body name="platform" pos="0.375 0.40 0.005">
-      <geom type="box" pos="0.0 0.0 0.0" size="0.25 0.25 0.005" rgba="0 0 0 1" condim="4"
+    <body name="platform" pos="0.75 0.0 0.005">
+      <geom type="box" pos="0.0 0.0 0.0" size="0.1875 0.1875 0.005" rgba="0 0 0 1" condim="4"
         friction="5.0 2.0 0.001"
         solimp="0.99 0.999 0.001" solref="0.002 1" />
     </body>

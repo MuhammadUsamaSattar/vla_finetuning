@@ -1,10 +1,17 @@
 #include "sim/mujoco_sim.hpp"
 
+#include <math.h>
+
 #include <Eigen/Dense>
+#include <algorithm>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <array>
+#include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <memory>
+#include <string>
+#include <utility>
 
 #include "mujoco/mjtnum.h"
 #include "mujoco/mujoco.h"
@@ -47,6 +54,16 @@ Sim::Sim(Controller& controller,
 void Sim::run_sim() {
     if (saver != nullptr)
         saver_thread = std::thread(&HDF5Saver::run_write_loop, saver.get());
+
+    std::srand(std::time({}));
+    std::array<std::string, 6> task_desc{
+        "Pick the ",
+        " and place it on the platform.",
+        "Take the ",
+        " to the platform.",
+        "Move the ",
+        " to the platform.",
+    };
 
     while (!glfwWindowShouldClose(window)) {
         double prev_save_time = 0.0;
@@ -140,7 +157,7 @@ void Sim::run_sim() {
                          "X: %f  Y: %f  Z: %f\n"
                          "w: %f  x: %f  y: %f  z: %f",
                          task_idx,
-                         tasks[task_idx % 3].c_str(),
+                         tasks[task_idx % tasks.size()].c_str(),
                          gripper_ctrl,
                          mj_data->time,
                          mj_data->xpos[hand_id * 3 + 0],
@@ -164,6 +181,7 @@ void Sim::run_sim() {
                     std::copy(delta.begin(), delta.end(), ee_pose.begin());
                     ee_pose[6] = gripper_ctrl - prev_gripper_ctrl;
                     prev_gripper_ctrl = gripper_ctrl;
+                    int task_desc_idx = rand() % (task_desc.size() / 2);
 
                     std::array<mjtNum, 8> state{mj_data->ctrl[0],
                                                 mj_data->ctrl[1],
@@ -181,7 +199,8 @@ void Sim::run_sim() {
                                 half_H,
                                 std::move(ee_pose),
                                 std::move(state),
-                                tasks[task_idx % 3],
+                                task_desc[2 * task_desc_idx + 0] + tasks[task_idx % tasks.size()] +
+                                    task_desc[2 * task_desc_idx + 1],
                                 mj_data->time);
                     prev_save_time = mj_data->time;
                 }
@@ -334,13 +353,22 @@ void Sim::resetEpisode() {
                                 mj_name2id(mj_model, mjOBJ_BODY, "ball"),
                                 mj_name2id(mj_model, mjOBJ_BODY, "box")};
 
-    std::srand(std::time({}));
-    for (auto body_id : body_ids) {
-        int joint_id = mj_model->body_jntadr[body_id];    // joint index
-        int q_address = mj_model->jnt_qposadr[joint_id];  // qpos start
+    std::array<std::pair<double, double>, 3> locs{};
+    for (size_t i = 0; i < body_ids.size(); i++) {
+        int joint_id = mj_model->body_jntadr[body_ids[i]];  // joint index
+        int q_address = mj_model->jnt_qposadr[joint_id];    // qpos start
 
-        mj_data->qpos[q_address + 0] = get_random_double(-0.5, 0.5);
-        mj_data->qpos[q_address + 1] = get_random_double(-0.5, 0.5);
+        double x, y;
+        do {
+            auto [x_new, y_new] = get_random_position(0.3, 0.5);
+            x = x_new;
+            y = y_new;
+        } while ((i != 0) && (get_dist(std::pair<double, double>{x, y}, locs) < 0.05));
+        locs[i].first = x;
+        locs[i].second = y;
+
+        mj_data->qpos[q_address + 0] = x;
+        mj_data->qpos[q_address + 1] = y;
         mj_data->qpos[q_address + 2] = 0.025;
 
         // keep orientation valid (unit quaternion!)
@@ -425,6 +453,18 @@ void Sim::setup_env(int video_frame_rate,
         saver = std::make_unique<HDF5Saver>("temp_data");
 }
 
-double get_random_double(double a, double b) {
-    return ((static_cast<double>(std::rand()) / RAND_MAX) * (b - a)) + a;
+std::array<double, 2> get_random_position(double a, double b) {
+    double r = ((static_cast<double>(std::rand()) / RAND_MAX) * (b - a)) + a;
+    double theta = (static_cast<double>(std::rand()) / RAND_MAX) * M_PI * 2;
+
+    return std::array<double, 2>{r * cos(theta), r * sin(theta)};
+}
+
+double get_dist(std::pair<double, double> new_loc, std::array<std::pair<double, double>, 3>& locs) {
+    double min_dist = 10000000;
+    for (auto p : locs) {
+        min_dist = std::min(
+            min_dist, sqrt(pow(new_loc.first - p.first, 2) + pow(new_loc.second - p.second, 2)));
+    }
+    return min_dist;
 }

@@ -208,4 +208,5 @@ class Sim {
     void get_model_and_data();
 };
 
-double get_random_double(double a, double b);
+std::array<double, 2> get_random_position(double a, double b);
+double get_dist(std::pair<double, double> new_loc, std::array<std::pair<double, double>, 3>& locs);
