@@ -1,6 +1,7 @@
 #pragma once
 
 #include <H5Cpp.h>
+#include <H5Group.h>
 #include <H5public.h>
 #include <mujoco/mujoco.h>
 
@@ -29,10 +30,12 @@ class HDF5Saver {
     std::atomic<bool> running{true};
     HDF5Saver(const std::string& path);
 
-    void new_episode();
+    void new_episode(int episode_increment);
 
     void write_data();
     void run_write_loop();
+
+    size_t get_queue_size();
 
     void push(std::vector<uint8_t>&& main_img,
               std::vector<uint8_t>&& wrist_img,
@@ -47,11 +50,12 @@ class HDF5Saver {
     void close();
 
    private:
+    std::queue<SaveData> queue;
     H5::H5File file;
+    H5::Group episode;
     std::string path;
     int frame_num{-1};
-    int file_num{-1};
-    std::queue<SaveData> queue;
+    int episode_num{-1};
     std::mutex mtx;
 
     template <typename T>

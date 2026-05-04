@@ -9,7 +9,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <ctime>
+#include <iostream>
 #include <memory>
+#include <ostream>
 #include <string>
 #include <utility>
 
@@ -33,13 +36,14 @@ bool Sim::key_gripper_open = false;   // F
 bool Sim::key_gripper_close = false;  // H
 
 // EE control
-double Sim::EE_STEP = 0.000625;
+double Sim::EE_STEP = 0.0005;
 double Sim::ROT_STEP = 0.0025;
 const double Sim::EE_STEP_STEP = EE_STEP / 10;
 const double Sim::ROT_STEP_STEP = ROT_STEP / 10;
 
 // Reset episdoe
 bool Sim::reset_episode = false;
+int Sim::episode_increment = 1;
 
 Sim::Sim(Controller& controller,
          int video_frame_rate,
@@ -64,6 +68,7 @@ void Sim::run_sim() {
         "Move the ",
         " to the platform.",
     };
+    clock_t t{};
 
     while (!glfwWindowShouldClose(window)) {
         double prev_save_time = 0.0;
@@ -72,8 +77,12 @@ void Sim::run_sim() {
         double prev_gripper_ctrl = gripper_ctrl;
         std::array<double, 6> delta{};
 
-        if (saver != nullptr)
-            saver->new_episode();
+        if (saver != nullptr) {
+            t = clock();
+            saver->new_episode(episode_increment);
+            std::cout << "Complete Func: " << ((float)(clock() - t) / CLOCKS_PER_SEC) * 1000
+                      << " ms" << std::endl;
+        }
 
         while (!reset_episode && !glfwWindowShouldClose(window)) {
             // Reset episode
@@ -204,14 +213,12 @@ void Sim::run_sim() {
                                 mj_data->time);
                     prev_save_time = mj_data->time;
                 }
-
                 prev_video_time = mj_data->time;
                 glfwSwapBuffers(window);
             }
             glfwPollEvents();
         }
-        task_idx += 1;
-        resetEpisode();
+        resetEpisode(episode_increment);
     }
     if (saver_thread.joinable()) {
         saver->running.store(false);
@@ -280,7 +287,6 @@ std::array<double, 6> Sim::applyEEDelta(
 
     const int n_arm = 7;
     Eigen::MatrixXd J(6, n_arm);  // Initialize vector 6 x 7
-    // std::cout << J.size() << std::endl;
 
     // Assign Jacobian with 6 DOFs and 7 joints
     // Iterate over (0 - 2) x (0 - 6) = 3 x 7
@@ -340,7 +346,8 @@ std::pair<std::vector<unsigned char>, std::vector<float>> Sim::renderCamera(
 
 // ─── Callbacks ──────────────────────────────────────────────────────────────
 
-void Sim::resetEpisode() {
+void Sim::resetEpisode(int episode_increment) {
+    task_idx += episode_increment;
     reset_episode = false;
 
     int key_id = mj_name2id(mj_model, mjOBJ_KEY, "home");
@@ -348,6 +355,8 @@ void Sim::resetEpisode() {
         mj_resetDataKeyframe(mj_model, mj_data, key_id);
         for (int i = 0; i < 7; i++) q_target[i] = mj_data->ctrl[i];
     }
+    gripper_ctrl = 255.0;  // or whatever "open" is in your setup
+    mj_data->ctrl[7] = gripper_ctrl;
 
     std::array<int, 3> body_ids{mj_name2id(mj_model, mjOBJ_BODY, "cylinder"),
                                 mj_name2id(mj_model, mjOBJ_BODY, "ball"),
@@ -359,11 +368,26 @@ void Sim::resetEpisode() {
         int q_address = mj_model->jnt_qposadr[joint_id];    // qpos start
 
         double x, y;
+        int attempts = 0;
+        const int max_attempts = 1000;
+        bool found = false;
         do {
             auto [x_new, y_new] = get_random_position(0.3, 0.5);
             x = x_new;
             y = y_new;
-        } while ((i != 0) && (get_dist(std::pair<double, double>{x, y}, locs) < 0.05));
+            attempts++;
+            if (attempts >= max_attempts) {
+                // Fallback: place at fixed position
+                double angle = i * 2.0 * M_PI / 3.0;
+                double radius = 0.4;
+                x = radius * cos(angle);
+                y = radius * sin(angle);
+                found = true;
+            } else if (i == 0 || get_dist(std::pair<double, double>{x, y}, locs) >= 0.05) {
+                found = true;
+            }
+        } while (!found);
+
         locs[i].first = x;
         locs[i].second = y;
 
@@ -377,6 +401,9 @@ void Sim::resetEpisode() {
         // mj_data->qpos[qadr + 5] = 0.0;
         // mj_data->qpos[qadr + 6] = 0.0;
     }
+
+    // Update kinematics after setting qpos
+    mj_forward(mj_model, mj_data);
 }
 
 void Sim::get_model_and_data() {
@@ -417,7 +444,7 @@ void Sim::setup_env(int video_frame_rate,
     get_model_and_data();
 
     // Set initial pose from keyframe
-    resetEpisode();
+    resetEpisode(1);
 
     // Init GLFW
     if (!glfwInit())
@@ -460,7 +487,8 @@ std::array<double, 2> get_random_position(double a, double b) {
     return std::array<double, 2>{r * cos(theta), r * sin(theta)};
 }
 
-double get_dist(std::pair<double, double> new_loc, std::array<std::pair<double, double>, 3>& locs) {
+double get_dist(const std::pair<double, double>& new_loc,
+                const std::array<std::pair<double, double>, 3>& locs) {
     double min_dist = 10000000;
     for (auto p : locs) {
         min_dist = std::min(

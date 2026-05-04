@@ -13,25 +13,6 @@
 #include "sim/controller.hpp"
 #include "sim/hdf5_saver.hpp"
 
-template <typename Callable>
-class ScopeGuard {
-   public:
-    explicit ScopeGuard(Callable&& callable) : callable_{callable} {}
-
-    ScopeGuard(const ScopeGuard&) = delete;
-    ScopeGuard(ScopeGuard&&) = delete;
-    ScopeGuard operator=(const ScopeGuard&) = delete;
-    ScopeGuard operator=(ScopeGuard&&) = delete;
-
-    ~ScopeGuard() { callable_(); }
-
-   private:
-    Callable callable_;
-};
-
-template <typename Callable>
-ScopeGuard(Callable&&) -> ScopeGuard<Callable>;
-
 class Sim {
    public:
     Sim(Controller& controller,
@@ -93,6 +74,7 @@ class Sim {
 
     // Reset episdoe
     static bool reset_episode;
+    static int episode_increment;
 
     std::unique_ptr<HDF5Saver> saver{};
     Controller& controller;
@@ -198,15 +180,24 @@ class Sim {
                 break;
             // Reset episode
             case GLFW_KEY_SPACE:
-                if (action == GLFW_PRESS)
+                if (action == GLFW_PRESS) {
                     reset_episode = true;
+                    episode_increment = 1;
+                }
+                break;
+            case GLFW_KEY_X:
+                if (action == GLFW_PRESS) {
+                    reset_episode = true;
+                    episode_increment = 0;
+                }
                 break;
         }
     }
 
-    void resetEpisode();
+    void resetEpisode(int episode_increment);
     void get_model_and_data();
 };
 
 std::array<double, 2> get_random_position(double a, double b);
-double get_dist(std::pair<double, double> new_loc, std::array<std::pair<double, double>, 3>& locs);
+double get_dist(const std::pair<double, double>& new_loc,
+                const std::array<std::pair<double, double>, 3>& locs);
